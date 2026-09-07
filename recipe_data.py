@@ -1,47 +1,99 @@
-"""
-레시피 검색 API 연동 모듈.
-
-1순위 API: TheMealDB (https://www.themealdb.com/api.php)
-- 무료 테스트키 "1"로 바로 사용 가능, 별도 키 발급 불필요.
-- 비건/베지테리언은 API가 카테고리로 직접 지원 (filter.php?c=Vegan / c=Vegetarian).
-- 알레르기(글루텐프리, 견과류 등) 필드는 없어서 재료 목록 기반 키워드 매칭을 추후 별도로 붙인다 (5일차 여유 태스크).
-
-TODO(2일차): 아래 함수들을 실제로 구현하고, 그래프에 연결하기 전에
-이 파일만 단독으로 실행해서 결과를 확인해볼 것 (도서봇 때와 동일한 방식).
-"""
-
 import requests
+from rich import print as rprint
 
 BASE_URL = "https://www.themealdb.com/api/json/v1/1"
+ALLERGEN_KEYWORDS = {
+    "nut": ["peanut", "almond", "walnut", "cashew", "pecan", "hazelnut", "pistachio", "macadamia"],
+    "dairy": ["milk", "cream", "cheese", "butter", "yogurt", "yoghurt", "whey"],
+    "gluten": ["flour", "wheat", "pasta", "bread", "noodle", "barley", "rye"],
+    "egg": ["egg"],
+    "seafood": ["shrimp", "prawn", "crab", "lobster", "squid", "octopus"],
+    "fish": ["salmon", "tuna", "cod", "anchovy", "fish sauce"],
+    "soy": ["soy", "soya", "tofu"],
+}
 
 
 def search_recipes_by_name(query: str) -> list[dict]:
-    """검색어(요리명/재료명)로 레시피 후보를 검색한다.
+    """검색어(요리명/재료명)로 레시피 후보를 검색한다."""
+    try:
+        query = query.strip()
+        res = requests.get(f"{BASE_URL}/search.php", params={"s": query}, timeout=5)
+        res.raise_for_status()
+        data = res.json()['meals']
 
-    TODO: GET {BASE_URL}/search.php?s={query} 호출
-    TODO: 결과 없음(meals가 None인 경우) 처리
-    TODO: 타임아웃/네트워크 에러 처리
-    """
-    raise NotImplementedError
+        if not data:
+            return []   
+
+        return data
+    except requests.RequestException as e:
+        print(f"레시피를 찾는 도중에 문제가 생겼습니다.: {e}")
+        return []
+        
 
 
 def search_recipes_by_category(category: str) -> list[dict]:
-    """카테고리(Vegan/Vegetarian 등)로 레시피 후보를 검색한다.
+    """카테고리(Vegan/Vegetarian 등)로 레시피 후보를 검색한다."""
+    try:
+        query = category.strip()
+        res = requests.get(f'{BASE_URL}/filter.php', params={'c': query}, timeout=5)
+        res.raise_for_status()
+        data = res.json()['meals']
 
-    TODO: GET {BASE_URL}/filter.php?c={category} 호출
-    """
-    raise NotImplementedError
+        if not data:
+            return []
+        
+        return data
+    except requests.RequestException as e:
+            print(f"레시피를 찾는 도중에 문제가 생겼습니다.: {e}")
 
+            return []
 
-def get_recipe_detail(meal_id: str) -> dict:
-    """레시피 상세 정보(재료 목록 포함)를 조회한다.
+def get_recipe_detail(meal_id: str) -> list[dict]:
+    """레시피 상세 정보(재료 목록 포함)를 조회한다."""
+    try:
+        res = requests.get(f'{BASE_URL}/lookup.php', params={'i': meal_id}, timeout=5)
+        res.raise_for_status()
+        data = res.json()['meals'][0]
+        ingredients = []
+        for key, value in data.items():
+            if not value:
+                continue
 
-    TODO: GET {BASE_URL}/lookup.php?i={meal_id} 호출
-    TODO: strIngredient1~20 필드를 하나의 ingredients 리스트로 정리해서 반환
-    """
-    raise NotImplementedError
+            if 'strIngredient' in key:
+                ingredients.append({key: value})
 
+        return ingredients
+    except requests.RequestException as e:
+        print(f"레시피를 찾는 도중에 문제가 생겼습니다.: {e}")
+        
+        return []
+
+def is_allergy_safe(ALLERGEN_KEYWORDS: dict, food_list: list) -> bool:
+    """알레르기 여부 판별 함수"""
+    allergen_list = []
+    for food in food_list:
+        for key, value in food.items():            
+            allergen_list.append(value)
+
+    for key, value in ALLERGEN_KEYWORDS.items():        
+        for allergen in allergen_list:
+            for v in value:
+                if v.lower() in allergen.lower():
+                    return True
+
+    return False
 
 if __name__ == "__main__":
-    # 단독 실행 테스트용 (2일차에 여기서부터 확인)
-    print(search_recipes_by_name("chicken"))
+    #테스트코드
+    foodlist = get_recipe_detail('53392')
+    rprint(foodlist)
+    rprint(is_allergy_safe(ALLERGEN_KEYWORDS, foodlist))
+
+    dairy_test = [{"strIngredient1": "Milk"}, {"strIngredient2": "Rice"}]
+    rprint("우유 포함 테스트:", is_allergy_safe(ALLERGEN_KEYWORDS, dairy_test)) 
+
+    safe_test = [{"strIngredient1": "Rice"}, {"strIngredient2": "Chicken"}]
+    rprint("안전한 재료 테스트:", is_allergy_safe(ALLERGEN_KEYWORDS, safe_test)) 
+
+    nut_test = [{"strIngredient1": "Almond"}, {"strIngredient2": "Sugar"}]
+    rprint("견과류 포함 테스트:", is_allergy_safe(ALLERGEN_KEYWORDS, nut_test)) 
