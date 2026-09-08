@@ -4,3 +4,7 @@ langchain-google-genai
 streamlit
 requests
 python-dotenv
+langchain
+langchain-google-genai
+langgraph
+pydantic

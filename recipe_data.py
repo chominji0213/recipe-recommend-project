@@ -48,8 +48,8 @@ def search_recipes_by_category(category: str) -> list[dict]:
 
             return []
 
-def get_recipe_detail(meal_id: str) -> list[dict]:
-    """레시피 상세 정보(재료 목록 포함)를 조회한다."""
+def get_recipe_detail(meal_id: str) -> dict:
+    """레시피 상세 정보(재료 목록 + 조리법)를 조회한다."""
     try:
         res = requests.get(f'{BASE_URL}/lookup.php', params={'i': meal_id}, timeout=5)
         res.raise_for_status()
@@ -62,11 +62,12 @@ def get_recipe_detail(meal_id: str) -> list[dict]:
             if 'strIngredient' in key:
                 ingredients.append({key: value})
 
-        return ingredients
+        instructions = data.get('strInstructions', '')
+        return {'ingredients': ingredients, 'instructions': instructions}
     except requests.RequestException as e:
         print(f"레시피를 찾는 도중에 문제가 생겼습니다.: {e}")
-        
-        return []
+
+        return {'ingredients': [], 'instructions': ''}
 
 def is_allergy_safe(ALLERGEN_KEYWORDS: dict, food_list: list) -> bool:
     """알레르기 여부 판별 함수"""
@@ -85,9 +86,9 @@ def is_allergy_safe(ALLERGEN_KEYWORDS: dict, food_list: list) -> bool:
 
 if __name__ == "__main__":
     #테스트코드
-    foodlist = get_recipe_detail('53392')
-    rprint(foodlist)
-    rprint(is_allergy_safe(ALLERGEN_KEYWORDS, foodlist))
+    detail = get_recipe_detail('53392')
+    rprint(detail)
+    rprint(is_allergy_safe(ALLERGEN_KEYWORDS, detail['ingredients']))
 
     dairy_test = [{"strIngredient1": "Milk"}, {"strIngredient2": "Rice"}]
     rprint("우유 포함 테스트:", is_allergy_safe(ALLERGEN_KEYWORDS, dairy_test)) 

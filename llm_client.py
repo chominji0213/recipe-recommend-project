@@ -1,84 +1,202 @@
 """
-StateGraph 4노드 구성: intent_node -> search_node -> branch_node -> generate_node
-
-지금까지 만든 챗봇(날씨/오늘뭐먹지/영화/도서)은 전부 선형 StateGraph였는데,
-이 프로젝트에서 branch_node의 조건부 분기(conditional edge)를 처음 도입한다.
-
-TODO(3일차): 각 노드 함수 구현
-TODO(4일차): StateGraph 연결 + SqliteSaver 체크포인터 (기존 프로젝트와 동일한 패턴 재사용)
+레시피 추천봇 - LangGraph StateGraph (4-node: intent -> search -> branch -> generate)
 """
-
 from typing import TypedDict, Literal
+from pydantic import BaseModel, Field
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import HumanMessage
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.sqlite import SqliteSaver
+from dotenv import load_dotenv
+import sqlite3
+from recipe_data import search_recipes_by_name, search_recipes_by_category, get_recipe_detail, is_allergy_safe
 
-import recipe_data
+from rich import print as rprint
 
+load_dotenv()
+ALLERGEN_KEYWORDS = {
+    "nut": ["peanut", "almond", "walnut", "cashew", "pecan", "hazelnut", "pistachio", "macadamia"],
+    "dairy": ["milk", "cream", "cheese", "butter", "yogurt", "yoghurt", "whey"],
+    "gluten": ["flour", "wheat", "pasta", "bread", "noodle", "barley", "rye"],
+    "egg": ["egg"],
+    "seafood": ["shrimp", "prawn", "crab", "lobster", "squid", "octopus"],
+    "fish": ["salmon", "tuna", "cod", "anchovy", "fish sauce"],
+    "soy": ["soy", "soya", "tofu"],
+}
 
 class RecipeState(TypedDict, total=False):
-    query: str                # 사용자 원문 입력
-    ingredients: list[str]    # intent_node가 뽑아낸 재료
-    diet: str                 # "vegan" | "vegetarian" | "general" 등 intent_node가 판단
-    search_results: list[dict]
-    answer: str
-    history: list[tuple[str, str]]  # (query, answer) 누적 - 도서봇 패턴 재사용 예정
+    query: str                       # 사용자 원문 입력
+    diet: Literal["vegan", "vegetarian", "general"]  
+    ingredients: list[str]          
+    search_results: list[dict]       
+    safe_results: list[dict]       
+    answer: str                    
+    # history: list[tuple[str, str]]  
+
+class IntentResult(BaseModel):
+    diet: Literal["vegan", "vegetarian", "general"] = Field(
+        description="사용자가 원하는 식단 제한. 특별한 언급이 없으면 general"
+    )
+    ingredients: list[str] = Field(
+        default_factory=list,
+        description="사용자가 언급한 구체적인 요리명/재료명 리스트. 없으면 빈 리스트"
+    )
+
+llm = init_chat_model('gemini-3.1-flash-lite', model_provider='google_genai')
+structured_llm  = llm.with_structured_output(IntentResult)
 
 
 def intent_node(state: RecipeState) -> RecipeState:
-    """사용자 입력에서 재료/원하는 요리 조건 + diet(비건/일반 등)를 추출한다.
-
-    TODO: LLM 호출로 재료 리스트 + diet 값을 구조화해서 뽑아내기
     """
-    raise NotImplementedError
+    사용자 의도 파악 노드
+    """    
+    prompt = f"""
+                너는 사용자의 문장에서 식단 조건(diet)과 언급된 재료/음식명(ingredients)을 추출하는 어시스턴트야.
+
+                diet는 다음 세 가지 중 하나로 판단해:
+                - "vegan": 고기, 생선, 해산물, 유제품, 계란, 꿀 등 동물성 재료를 전혀 원하지 않는다고 언급한 경우
+                - "vegetarian": 고기/생선/해산물은 원하지 않지만 유제품이나 계란은 괜찮다고 언급했거나, 단순히 "채식"이라고만 말한 경우
+                - "general": 특별한 식단 제한 언급이 없는 경우 (기본값)
+
+                ingredients는 사용자가 문장에서 구체적으로 언급한 요리명이나 재료명만 리스트로 뽑아. 언급이 없으면 빈 리스트를 반환해. 없는 재료를 지어내지 마.
+
+                그리고 요리명이나 재료명은 무조건 영어로 바꿔서 반환해
+
+                사용자 문장: "{state['query']}"
+            """
+    try:
+        raw_response = structured_llm.invoke(prompt)
+        result = raw_response
+
+    except Exception as e:
+        return {'diet': 'general', 'ingredients': []}
+
+    return {"diet": result.diet, "ingredients": result.ingredients}
 
 
 def search_node(state: RecipeState) -> RecipeState:
-    """recipe_data 모듈로 레시피 후보를 검색한다.
-
-    TODO: state["ingredients"]/state["query"] 기반으로 recipe_data.search_recipes_by_name 호출
     """
-    raise NotImplementedError
+    검색 노드: state["diet"]/state["ingredients"]를 보고 recipe_data.py의 함수 중 어떤 걸 호출할지 결정해서 검색 결과를 채움.
+    """    
+    if state['diet'] == 'vegan' or state['diet'] == 'vegetarian':
+        result = search_recipes_by_category(state['diet'].capitalize())
 
+    else:
+        if not state['ingredients']:
+            return {'search_results': []}
 
-def branch_router(state: RecipeState) -> Literal["vegan", "general"]:
-    """diet 값에 따라 다음 노드 경로를 결정하는 조건부 엣지 함수.
+        query = " ".join(state['ingredients'])    
+        result = search_recipes_by_name(query)
 
-    v1: 비건/일반 2갈래만 (TheMealDB category 파라미터만 갈아끼우는 수준).
-    TODO(5일차 여유): 알레르기 키워드 매칭 추가
-    """
-    raise NotImplementedError
+    return {'search_results': result}
 
 
 def branch_node(state: RecipeState) -> RecipeState:
-    """branch_router가 고른 경로에 맞게 검색 결과를 필터링/보강한다.
-
-    TODO: diet == "vegan"이면 recipe_data.search_recipes_by_category("Vegan")으로 재검색
     """
-    raise NotImplementedError
+    분기 판단 노드: state["search_results"] 각 레시피에 대해 get_recipe_detail + is_allergy_safe로 알레르기 안전한 것만 골라 safe_results에 채움.
+    """
+    recipes = state['search_results']
+    safe_results = []
+    for recipe in recipes:
+        detail_recipe = get_recipe_detail(recipe['idMeal'])
+        is_allergy = is_allergy_safe(ALLERGEN_KEYWORDS, detail_recipe['ingredients'])
+
+        if not is_allergy:
+            safe_results.append({
+                'name': recipe['strMeal'],
+                'instructions': detail_recipe['instructions'],
+            })
+
+    return {'safe_results': safe_results}
+
+
+def branch_router(state: RecipeState) -> str:
+    """
+    조건부 엣지 라우팅 함수
+    """
+    safe_recipe = state['safe_results']
+
+    if not safe_recipe: 
+        return '결과없음'
+    
+    return 'generate'
 
 
 def generate_node(state: RecipeState) -> RecipeState:
-    """검색/분기 결과를 종합해 최종 추천 답변을 생성한다.
-
-    TODO: LLM 호출로 답변 생성
-    TODO: history에 (query, answer) 누적 반환 (도서봇 패턴 재사용)
     """
-    raise NotImplementedError
+    답변 생성 노드: state["safe_results"]를 참고해서 LLM에게 최종 추천 답변을 만들게 함.
+    """
+    if not state['safe_results']:
+        return {'answer' : '죄송합니다. 레시피를 찾지못했습니다.'}
+
+    try:
+        llm = init_chat_model('gemini-3.1-flash-lite', model_provider='google_genai')
+        prompt = f"""
+                    너는 사용자에게 레시피를 추천해주는 친절한 요리 어시스턴트야.
+
+                    사용자 질문: "{state['query']}"
+
+                    아래는 조건(식단 제한, 알레르기)에 맞는 안전한 레시피 목록이야:
+                    {state['safe_results']}
+
+                    이 목록을 참고해서 사용자에게 레시피를 추천해줘. 다음 사항을 지켜:
+                    - 목록에 있는 레시피 중에서만 추천해. 목록에 없는 요리를 지어내지 마.
+                    - 여러 개 있으면 그 중 가장 어울리는 걸 1~2개 골라서 추천하고, 각각 왜 추천하는지 간단히 설명해줘.
+                    - 추천할 때 각 레시피의 조리법(instructions)을 참고해서 간단한 조리 방법도 함께 안내해줘.
+                    - 자연스러운 대화체로 답변해줘.
+                """
+        result = llm.invoke([HumanMessage(content=prompt)])
+        answer = result.content[0]['text']
+
+    except Exception as e:
+       answer = "죄송해요, 지금 답변을 생성하는 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요." 
+
+    return {'answer': answer}
 
 
 def build_graph():
-    """StateGraph를 조립해서 반환한다.
-
-    TODO: from langgraph.graph import StateGraph
-    TODO: add_node 4개 + add_edge(intent->search->branch) + add_conditional_edges(branch_router)
-    TODO: SqliteSaver 체크포인터 연결 (checkpoint.db)
     """
-    raise NotImplementedError
+    그래프 조립
+    """
+    conn = sqlite3.connect('checkpoint.db', check_same_thread=False)
+    memory = SqliteSaver(conn)
+
+    graph = StateGraph(RecipeState)
+
+    graph.add_node('intent', intent_node)
+    graph.add_node('search', search_node)
+    graph.add_node('branch', branch_node)
+    graph.add_node('generate', generate_node)
+
+    graph.add_edge(START, 'intent')
+    graph.add_edge('intent', 'search')
+    graph.add_edge('search', 'branch')
+    graph.add_conditional_edges(
+        'branch',
+        branch_router,
+        {'generate': 'generate', '결과없음' : 'generate' }
+    )
+    graph.add_edge('generate', END)
+
+    agent = graph.compile(checkpointer=memory)
+
+    return agent
 
 
-def ask(thread_id: str, user_message: str) -> str:
-    """그래프를 1회 호출해서 답변을 반환한다. (스트리밍은 이번 v1에서는 생략, 필요시 추가)"""
-    raise NotImplementedError
+def ask(agent, user_message: str, thread_id: str) -> str:
+    """
+    외부(app.py)에서 호출할 수 있는 진입점.
+    """
+
+    config = {'configurable': {'thread_id': thread_id}}
+    result = agent.invoke({'query': user_message}, config)
+
+    return result['answer']
 
 
 if __name__ == "__main__":
-    # 단독 실행 테스트용 (4일차 통합 테스트에서 여기부터 확인)
-    print(ask(thread_id="test", user_message="계란이랑 감자로 만들 수 있는 요리 추천해줘"))
+    agent = build_graph()
+
+    print(ask(agent, "닭고기랑 마늘 들어간 요리 추천해줘", "test-thread-3"))
+
+    #rprint(intent_node({"query": "닭고기 요리 추천해줘"}))
