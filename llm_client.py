@@ -9,7 +9,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 from dotenv import load_dotenv
 import sqlite3
-from recipe_data import search_recipes_by_name, search_recipes_by_category, get_recipe_detail, is_allergy_safe
+from recipe_data import search_recipes_by_name, search_recipes_by_category, get_recipe_detail, is_allergy_safe, search_recipes_by_ingredient
 
 from rich import print as rprint
 
@@ -78,6 +78,8 @@ def search_node(state: RecipeState) -> RecipeState:
     """
     검색 노드: state["diet"]/state["ingredients"]를 보고 recipe_data.py의 함수 중 어떤 걸 호출할지 결정해서 검색 결과를 채움.
     """    
+    result = []
+
     if state['diet'] == 'vegan' or state['diet'] == 'vegetarian':
         result = search_recipes_by_category(state['diet'].capitalize())
 
@@ -85,8 +87,10 @@ def search_node(state: RecipeState) -> RecipeState:
         if not state['ingredients']:
             return {'search_results': []}
 
-        query = " ".join(state['ingredients'])    
-        result = search_recipes_by_name(query)
+        for ingredient in state['ingredients']:
+            recipe = search_recipes_by_ingredient(ingredient)
+
+            result.extend(recipe)
 
     return {'search_results': result}
 
@@ -209,8 +213,8 @@ def ask(agent, user_message: str, thread_id: str) -> str:
 
 if __name__ == "__main__":
     agent = build_graph()
-    #print(branch_node({"search_results": search_recipes_by_name("Vegan")}))
-    
-    print(ask(agent, "파스타 레시피 추천해줘", "test-thread-3"))
 
-    #rprint(intent_node({"query": "닭고기 요리 추천해줘"}))
+    print(ask(agent, "비건 파스타 추천해줘", "test-thread-1"))
+    print(ask(agent, "닭고기 요리 추천해줘", "test-thread-2"))
+    print(ask(agent, "닭고기랑 마늘 들어간 요리 추천해줘", "test-thread-3"))
+    print(ask(agent, "파스타 레시피 알려줘", "test-thread-4"))

@@ -30,12 +30,11 @@ def search_recipes_by_name(query: str) -> list[dict]:
         return []
         
 
-
 def search_recipes_by_category(category: str) -> list[dict]:
     """카테고리(Vegan/Vegetarian 등)로 레시피 후보를 검색한다."""
     try:
-        query = category.strip()
-        res = requests.get(f'{BASE_URL}/filter.php', params={'c': query}, timeout=5)
+        c = category.strip()
+        res = requests.get(f'{BASE_URL}/filter.php', params={'c': c}, timeout=5)
         res.raise_for_status()
         data = res.json()['meals']
 
@@ -47,6 +46,27 @@ def search_recipes_by_category(category: str) -> list[dict]:
             print(f"레시피를 찾는 도중에 문제가 생겼습니다.: {e}")
 
             return []
+
+
+def search_recipes_by_ingredient(ingredient: str) -> list[dict]:
+    """
+    재료 하나로 그 재료에 들어간 레시피 후보를 검색한다.
+    """
+    try:
+        i = ingredient.strip()
+        res = requests.get(f'{BASE_URL}/filter.php', params={'i': i}, timeout=5)
+        res.raise_for_status()
+        data = res.json()['meals']
+
+        if not data:
+            return []
+
+        return data        
+    except requests.RequestException as e:
+        print(f'레시피를 찾는 도중에 문제가 생겼습니다. : {e}')
+
+        return []
+   
 
 def get_recipe_detail(meal_id: str) -> dict:
     """레시피 상세 정보(재료 목록 + 조리법)를 조회한다."""
@@ -87,14 +107,4 @@ def is_allergy_safe(ALLERGEN_KEYWORDS: dict, food_list: list) -> bool:
 if __name__ == "__main__":
     #테스트코드
     detail = get_recipe_detail('53392')
-    rprint(detail)
-    rprint(is_allergy_safe(ALLERGEN_KEYWORDS, detail['ingredients']))
-
-    dairy_test = [{"strIngredient1": "Milk"}, {"strIngredient2": "Rice"}]
-    rprint("우유 포함 테스트:", is_allergy_safe(ALLERGEN_KEYWORDS, dairy_test)) 
-
-    safe_test = [{"strIngredient1": "Rice"}, {"strIngredient2": "Chicken"}]
-    rprint("안전한 재료 테스트:", is_allergy_safe(ALLERGEN_KEYWORDS, safe_test)) 
-
-    nut_test = [{"strIngredient1": "Almond"}, {"strIngredient2": "Sugar"}]
-    rprint("견과류 포함 테스트:", is_allergy_safe(ALLERGEN_KEYWORDS, nut_test)) 
+    rprint(search_recipes_by_ingredient('onion'))
