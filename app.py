@@ -1,17 +1,12 @@
-"""
-Streamlit UI. 기존 챗봇들(영화/도서 추천봇)의 app.py 구조를 그대로 재사용.
-
-TODO(4일차): llm_client.ask()가 구현되면 연결
-"""
-
 import uuid
-
 import streamlit as st
-
 import llm_client
 
 st.set_page_config(page_title="레시피 추천봇", page_icon="🍳")
-st.title("🍳 레시피 추천봇")
+st.title("레시피 추천봇")
+
+if "agent" not in st.session_state:
+    st.session_state.agent = llm_client.build_graph()
 
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = str(uuid.uuid4())
@@ -35,7 +30,6 @@ if user_input:
         st.write(user_input)
 
     with st.chat_message("assistant"):
-        # TODO: llm_client.ask()가 구현되면 아래 placeholder를 교체
-        answer = llm_client.ask(thread_id=st.session_state.thread_id, user_message=user_input)
+        answer = llm_client.ask(st.session_state.agent, user_input, st.session_state.thread_id)
         st.write(answer)
     st.session_state.messages.append(("assistant", answer))

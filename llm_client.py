@@ -16,7 +16,7 @@ from rich import print as rprint
 load_dotenv()
 ALLERGEN_KEYWORDS = {
     "nut": ["peanut", "almond", "walnut", "cashew", "pecan", "hazelnut", "pistachio", "macadamia"],
-    "dairy": ["milk", "cream", "cheese", "butter", "yogurt", "yoghurt", "whey"],
+    "dairy": ["milk", "cream", "cheese", "mozzarella", "butter", "yogurt", "yoghurt", "whey"],
     "gluten": ["flour", "wheat", "pasta", "bread", "noodle", "barley", "rye"],
     "egg": ["egg"],
     "seafood": ["shrimp", "prawn", "crab", "lobster", "squid", "octopus"],
@@ -93,21 +93,33 @@ def search_node(state: RecipeState) -> RecipeState:
 
 def branch_node(state: RecipeState) -> RecipeState:
     """
-    분기 판단 노드: state["search_results"] 각 레시피에 대해 get_recipe_detail + is_allergy_safe로 알레르기 안전한 것만 골라 safe_results에 채움.
+    태깅 노드: 각 레시피에 매칭되는 알레르기 카테고리를 붙여서 전체 목록을 유지
     """
     recipes = state['search_results']
-    safe_results = []
+    tagged_results = []
+
+ 
     for recipe in recipes:
-        detail_recipe = get_recipe_detail(recipe['idMeal'])
-        is_allergy = is_allergy_safe(ALLERGEN_KEYWORDS, detail_recipe['ingredients'])
+        matched_allergens = []
+        detail_recipes = get_recipe_detail(recipe['idMeal'])
+        
+        for detail_recipe in detail_recipes['ingredients']:
+            for key, value in detail_recipe.items():
 
-        if not is_allergy:
-            safe_results.append({
-                'name': recipe['strMeal'],
-                'instructions': detail_recipe['instructions'],
-            })
+                for allergy_key, allergy_value in ALLERGEN_KEYWORDS.items():       
+                    for allergy in allergy_value:
 
-    return {'safe_results': safe_results}
+                        # 레시피의 매칭되는 알레르기 분류
+                        if allergy.lower() in value.lower():        
+                            matched_allergens.append(allergy_key)
+    
+        tagged_results.append({
+            'name': recipe['strMeal'],
+            'instructions': detail_recipes['instructions'],
+            'allergens': matched_allergens
+        })
+
+    return {'safe_results': tagged_results}
 
 
 def branch_router(state: RecipeState) -> str:
@@ -143,6 +155,7 @@ def generate_node(state: RecipeState) -> RecipeState:
                     - 목록에 있는 레시피 중에서만 추천해. 목록에 없는 요리를 지어내지 마.
                     - 여러 개 있으면 그 중 가장 어울리는 걸 1~2개 골라서 추천하고, 각각 왜 추천하는지 간단히 설명해줘.
                     - 추천할 때 각 레시피의 조리법(instructions)을 참고해서 간단한 조리 방법도 함께 안내해줘.
+                    - 그리고 혹시 알레르기 유발 재료가 있으니, 추천은 해조되 경고문구를 포함해줘
                     - 자연스러운 대화체로 답변해줘.
                 """
         result = llm.invoke([HumanMessage(content=prompt)])
@@ -196,7 +209,8 @@ def ask(agent, user_message: str, thread_id: str) -> str:
 
 if __name__ == "__main__":
     agent = build_graph()
-
-    print(ask(agent, "닭고기랑 마늘 들어간 요리 추천해줘", "test-thread-3"))
+    #print(branch_node({"search_results": search_recipes_by_name("Vegan")}))
+    
+    print(ask(agent, "파스타 레시피 추천해줘", "test-thread-3"))
 
     #rprint(intent_node({"query": "닭고기 요리 추천해줘"}))
