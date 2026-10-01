@@ -210,11 +210,3 @@ def ask(agent, user_message: str, thread_id: str) -> str:
 
     return result['answer']
 
-
-if __name__ == "__main__":
-    agent = build_graph()
-
-    print(ask(agent, "비건 파스타 추천해줘", "test-thread-1"))
-    print(ask(agent, "닭고기 요리 추천해줘", "test-thread-2"))
-    print(ask(agent, "닭고기랑 마늘 들어간 요리 추천해줘", "test-thread-3"))
-    print(ask(agent, "파스타 레시피 알려줘", "test-thread-4"))
