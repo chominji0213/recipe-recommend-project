@@ -104,7 +104,3 @@ def is_allergy_safe(ALLERGEN_KEYWORDS: dict, food_list: list) -> bool:
 
     return False
 
-if __name__ == "__main__":
-    #테스트코드
-    detail = get_recipe_detail('53392')
-    rprint(search_recipes_by_ingredient('onion'))
